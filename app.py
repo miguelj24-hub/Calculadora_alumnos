@@ -94,16 +94,56 @@ except Exception as exc:
     st.stop()
 
 programas = sorted(datos["Programa académico"].dropna().unique())
-programa = st.sidebar.selectbox("Programa", programas)
+if not programas:
+    st.error("El archivo no contiene programas válidos.")
+    st.stop()
+
+if st.session_state.get("programa") not in programas:
+    st.session_state["programa"] = programas[0]
+programa = st.sidebar.selectbox("Programa", programas, key="programa")
 datos_programa = datos[datos["Programa académico"] == programa].copy()
 esquema = determinar_esquema(datos_programa.iloc[0])
 
 st.sidebar.markdown("### Periodos")
-anios_disponibles = sorted(datos_programa["Año comercial"].unique())
-anio_ref = st.sidebar.selectbox("Año de referencia", anios_disponibles, index=0)
-periodos_ref = sorted(datos_programa.loc[datos_programa["Año comercial"] == anio_ref, "Periodo Comercial"].unique())
-periodo_ref = st.sidebar.selectbox("Periodo de referencia", periodos_ref)
-anio_obj = st.sidebar.number_input("Año objetivo", min_value=int(anio_ref), max_value=2040, value=max(2030, int(anio_ref)), step=1)
+anios_disponibles = [int(x) for x in sorted(datos_programa["Año comercial"].unique())]
+if not anios_disponibles:
+    st.error("El programa seleccionado no contiene años válidos.")
+    st.stop()
+
+if st.session_state.get("anio_ref") not in anios_disponibles:
+    st.session_state["anio_ref"] = anios_disponibles[0]
+anio_ref = st.sidebar.selectbox("Año de referencia", anios_disponibles, key="anio_ref")
+
+periodos_ref = sorted(
+    datos_programa.loc[
+        datos_programa["Año comercial"] == anio_ref,
+        "Periodo Comercial",
+    ].dropna().unique()
+)
+if not periodos_ref:
+    st.error("No existen periodos para el año seleccionado.")
+    st.stop()
+
+# La llave cambia con programa y año para que Streamlit no conserve un periodo
+# perteneciente a una selección anterior.
+clave_periodo = f"periodo_ref::{programa}::{anio_ref}"
+if st.session_state.get(clave_periodo) not in periodos_ref:
+    st.session_state[clave_periodo] = periodos_ref[0]
+periodo_ref = st.sidebar.selectbox(
+    "Periodo de referencia",
+    periodos_ref,
+    key=clave_periodo,
+)
+
+if "anio_obj" not in st.session_state or int(st.session_state["anio_obj"]) < anio_ref:
+    st.session_state["anio_obj"] = max(2030, anio_ref)
+anio_obj = st.sidebar.number_input(
+    "Año objetivo",
+    min_value=anio_ref,
+    max_value=2040,
+    step=1,
+    key="anio_obj",
+)
 
 ref = datos_programa[
     (datos_programa["Año comercial"] == anio_ref)
@@ -111,6 +151,10 @@ ref = datos_programa[
 ]
 q_ref = int(ref["_unidad"].nunique())
 beca_ref = float(ref["_beca"].fillna(0).mean()) if len(ref) else 0.0
+
+if q_ref <= 0:
+    st.error("El periodo seleccionado no contiene inscritos válidos.")
+    st.stop()
 
 st.sidebar.markdown("### Precios 2026")
 precio_online_mes = st.sidebar.number_input("Online / maestría mensual", 1_000, 100_000, 17_000, 500)
