@@ -277,7 +277,7 @@ with tab1:
         x=[optimo["Precio"]], y=[optimo["Beca"]], mode="markers",
         marker=dict(color="red", size=13, symbol="x"), name="Óptimo",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with tab2:
     base_frontera = factibles if not factibles.empty else grid
@@ -293,7 +293,7 @@ with tab2:
     fig2.update_layout(xaxis_title="Precio promedio nominal", yaxis_title="Beca")
     fig2.update_xaxes(tickprefix="$", tickformat=",.0f")
     fig2.update_yaxes(tickformat=".0%")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 with tab3:
     precio_actual = precio_obj_base
@@ -316,7 +316,7 @@ with tab3:
             "Inscritos": "{:,.0f}", "Precio": "${:,.0f}", "Beca": "{:.1%}",
             "Ingreso": "${:,.0f}", "Margen": "${:,.0f}", "Bolsa": "${:,.0f}",
         }),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     csv_descarga = comparativa.to_csv(index=False).encode("utf-8-sig")
@@ -330,7 +330,7 @@ with tab4:
     )
     st.markdown("#### Tendencia histórica del programa")
     fig3 = px.bar(tendencia, x="Periodo Comercial", y="Inscritos", color="Año comercial", barmode="group")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
     st.markdown("#### Modelo de demanda")
     st.latex(r"Q=\min\{Capacidad,\ Q_{ref}(P^{real}/P^{real}_{ref})^{\varepsilon}e^{\gamma(B-B_{ref})}\}")
     st.markdown(

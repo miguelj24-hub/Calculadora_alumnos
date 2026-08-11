@@ -35,3 +35,5 @@ Carga `Datos.csv` desde la barra lateral. También puedes colocarlo en la misma 
 ## Alcance
 
 El archivo histórico disponible contiene inscritos. Por ello, la elasticidad de demanda es un supuesto editable y no una estimación causal. La aplicación distingue visualmente este alcance y permite sustituir los supuestos cuando existan datos completos del embudo, costos, competencia e INPC.
+
+La selección de periodo se reinicia automáticamente cuando cambia el programa o el año de referencia, evitando conservar combinaciones que no existen en los datos.
