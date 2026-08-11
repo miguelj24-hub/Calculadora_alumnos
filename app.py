@@ -18,12 +18,28 @@ COLUMNAS_REQUERIDAS = {
 }
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def cargar_csv(archivo):
-    df = pd.read_csv(archivo, low_memory=False, encoding="utf-8-sig")
-    faltantes = COLUMNAS_REQUERIDAS.difference(df.columns)
+    # Leer primero únicamente el encabezado permite descartar más de cien
+    # columnas que el optimizador no utiliza y reduce mucho el uso de memoria.
+    encabezado = pd.read_csv(archivo, nrows=0, encoding="utf-8-sig").columns.tolist()
+    faltantes = COLUMNAS_REQUERIDAS.difference(encabezado)
     if faltantes:
         raise ValueError("Faltan columnas: " + ", ".join(sorted(faltantes)))
+
+    columnas_utiles = list(COLUMNAS_REQUERIDAS)
+    for opcional in ["Id de oportunidad", "% de beca aprobada"]:
+        if opcional in encabezado:
+            columnas_utiles.append(opcional)
+
+    if hasattr(archivo, "seek"):
+        archivo.seek(0)
+    df = pd.read_csv(
+        archivo,
+        usecols=columnas_utiles,
+        low_memory=False,
+        encoding="utf-8-sig",
+    )
 
     df = df.copy()
     df["Año comercial"] = pd.to_numeric(df["Año comercial"], errors="coerce")
@@ -40,6 +56,15 @@ def cargar_csv(archivo):
         df["_beca"] = pd.to_numeric(df["% de beca aprobada"], errors="coerce") / 100
     else:
         df["_beca"] = np.nan
+
+    # Las columnas repetitivas ocupan mucho menos como categorías.
+    for columna in [
+        "Programa académico",
+        "Periodo Comercial",
+        "Nivel de programa",
+        "Unidad de negocio",
+    ]:
+        df[columna] = df[columna].astype("category")
     return df
 
 
@@ -80,7 +105,7 @@ st.title("🎓 Optimizador de Precio y Beca")
 st.caption("Prototipo para explorar escenarios con datos históricos y supuestos editables.")
 
 archivo_local = Path("Datos.csv")
-archivo = st.sidebar.file_uploader("Cargar Datos.csv", type=["csv"])
+archivo = st.sidebar.file_uploader("Cargar Datos.csv", type=["csv"], max_upload_size=500)
 fuente = archivo if archivo is not None else (archivo_local if archivo_local.exists() else None)
 
 if fuente is None:
@@ -101,7 +126,7 @@ if not programas:
 if st.session_state.get("programa") not in programas:
     st.session_state["programa"] = programas[0]
 programa = st.sidebar.selectbox("Programa", programas, key="programa")
-datos_programa = datos[datos["Programa académico"] == programa].copy()
+datos_programa = datos[datos["Programa académico"] == programa]
 esquema = determinar_esquema(datos_programa.iloc[0])
 
 st.sidebar.markdown("### Periodos")
