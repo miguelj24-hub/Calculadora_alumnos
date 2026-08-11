@@ -2,3 +2,4 @@
 __pycache__/
 Datos.csv
 *.pyc
+.streamlit/secrets.toml

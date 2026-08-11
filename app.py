@@ -1,10 +1,16 @@
 from pathlib import Path
+from datetime import datetime
+from hashlib import sha256
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
+import gspread
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from google.oauth2.service_account import Credentials
 
 
 st.set_page_config(page_title="Optimizador Precio–Beca", page_icon="🎓", layout="wide")
@@ -141,6 +147,105 @@ def calcular_kpis(q, precio, beca, costo_pct):
     costo = ingreso_bruto * costo_pct
     margen = ingreso_neto - costo
     return ingreso_neto, margen, bolsa
+
+
+def google_sheets_configurado():
+    return (
+        "gcp_service_account" in st.secrets
+        and "google_sheets" in st.secrets
+        and bool(st.secrets["google_sheets"].get("spreadsheet_id"))
+    )
+
+
+def guardar_comparativa_google_sheets(comparativa, contexto):
+    if not google_sheets_configurado():
+        raise ValueError("Falta configurar Google Sheets en los Secrets de Streamlit.")
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+    ]
+    credenciales = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=scopes,
+    )
+    cliente = gspread.authorize(credenciales)
+    configuracion = st.secrets["google_sheets"]
+    libro = cliente.open_by_key(configuracion["spreadsheet_id"])
+    nombre_hoja = configuracion.get("worksheet_name", "Comparativas")
+
+    try:
+        hoja = libro.worksheet(nombre_hoja)
+    except gspread.WorksheetNotFound:
+        hoja = libro.add_worksheet(title=nombre_hoja, rows=1000, cols=30)
+
+    encabezados = [
+        "Id registro",
+        "Fecha de guardado",
+        "Programa",
+        "Esquema",
+        "Periodo referencia",
+        "Año referencia",
+        "Año objetivo",
+        "Escenario",
+        "Inscritos",
+        "Precio",
+        "Beca",
+        "Ingreso",
+        "Margen",
+        "Bolsa",
+        "Leads históricos",
+        "Conversión histórica",
+        "Inscritos base",
+        "Capacidad",
+        "Meta mínima",
+        "Pago completo",
+        "Incremento nominal",
+        "Inflación",
+        "Costo",
+        "Elasticidad",
+        "Sensibilidad a beca",
+        "Paridad real sobre",
+    ]
+
+    if not hoja.get_all_values():
+        hoja.append_row(encabezados, value_input_option="RAW")
+
+    id_registro = str(uuid4())
+    fecha = datetime.now(ZoneInfo("America/Mexico_City")).isoformat(timespec="seconds")
+    filas = []
+    for _, fila in comparativa.iterrows():
+        filas.append([
+            id_registro,
+            fecha,
+            contexto["programa"],
+            contexto["esquema"],
+            contexto["periodo_ref"],
+            contexto["anio_ref"],
+            contexto["anio_obj"],
+            fila["Escenario"],
+            float(fila["Inscritos"]),
+            float(fila["Precio"]),
+            float(fila["Beca"]),
+            float(fila["Ingreso"]),
+            float(fila["Margen"]),
+            float(fila["Bolsa"]),
+            contexto["leads_historicos"],
+            contexto["conversion_historica"],
+            contexto["q_ref"],
+            contexto["capacidad"],
+            contexto["meta"],
+            contexto["pago_completo"],
+            contexto["incremento_nominal"],
+            contexto["inflacion"],
+            contexto["costo_pct"],
+            contexto["elasticidad"],
+            contexto["efecto_beca"],
+            contexto["paridad_tipo"],
+        ])
+
+    hoja.append_rows(filas, value_input_option="USER_ENTERED")
+    return libro.url, id_registro
 
 
 st.title("🎓 Optimizador de Precio y Beca")
@@ -543,7 +648,75 @@ with tab3:
         hide_index=True,
     )
     csv_descarga = comparativa.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Descargar comparativa CSV", csv_descarga, "comparativa_optimizador.csv", "text/csv")
+    contexto_guardado = {
+        "programa": programa,
+        "esquema": esquema,
+        "periodo_ref": periodo_ref,
+        "anio_ref": int(anio_ref),
+        "anio_obj": int(anio_obj),
+        "leads_historicos": int(leads_historicos),
+        "conversion_historica": float(conversion_historica),
+        "q_ref": int(q_ref),
+        "capacidad": int(capacidad),
+        "meta": int(meta) if usar_meta else 0,
+        "pago_completo": float(pago_completo),
+        "incremento_nominal": float(incremento_nominal),
+        "inflacion": float(inflacion),
+        "costo_pct": float(costo_pct),
+        "elasticidad": float(elasticidad),
+        "efecto_beca": float(efecto_beca),
+        "paridad_tipo": paridad_tipo,
+    }
+    huella = sha256(
+        (comparativa.to_csv(index=False) + repr(sorted(contexto_guardado.items()))).encode("utf-8")
+    ).hexdigest()
+    ya_guardado = st.session_state.get("ultima_comparativa_guardada") == huella
+
+    col_guardar, col_descargar = st.columns(2)
+    with col_guardar:
+        if not google_sheets_configurado():
+            st.info(
+                "Configura las credenciales de Google Sheets en los Secrets de Streamlit "
+                "para habilitar el guardado."
+            )
+        elif st.button(
+            "Guardar escenario en Google Sheets",
+            type="primary",
+            disabled=ya_guardado,
+            width="stretch",
+        ):
+            try:
+                with st.spinner("Guardando comparativa..."):
+                    url_hoja, id_guardado = guardar_comparativa_google_sheets(
+                        comparativa,
+                        contexto_guardado,
+                    )
+                st.session_state["ultima_comparativa_guardada"] = huella
+                st.session_state["ultimo_id_guardado"] = id_guardado
+                st.session_state["ultima_url_hoja"] = url_hoja
+                st.success(f"Escenario guardado. Folio: {id_guardado}")
+            except Exception as exc:
+                st.error(f"No se pudo guardar en Google Sheets: {exc}")
+
+        if ya_guardado:
+            st.success(
+                "Este escenario ya fue guardado. Cambia un parámetro para habilitar nuevamente el botón."
+            )
+        if st.session_state.get("ultima_url_hoja"):
+            st.link_button(
+                "Abrir Google Sheets",
+                st.session_state["ultima_url_hoja"],
+                width="stretch",
+            )
+
+    with col_descargar:
+        st.download_button(
+            "Descargar comparativa CSV",
+            csv_descarga,
+            "comparativa_optimizador.csv",
+            "text/csv",
+            width="stretch",
+        )
 
 with tab4:
     tendencia = (
