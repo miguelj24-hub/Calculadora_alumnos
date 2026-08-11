@@ -28,15 +28,28 @@ def cargar_csv(archivo):
         raise ValueError("Faltan columnas: " + ", ".join(sorted(faltantes)))
 
     columnas_utiles = list(COLUMNAS_REQUERIDAS)
-    for opcional in ["Id de oportunidad", "% de beca aprobada"]:
+    for opcional in [
+        "Id de oportunidad",
+        "Id de lead",
+        "% de beca aprobada",
+        "Conteo de inscrito",
+        "Hora de inscrito",
+        "Etapa de venta",
+    ]:
         if opcional in encabezado:
             columnas_utiles.append(opcional)
 
     if hasattr(archivo, "seek"):
         archivo.seek(0)
+    tipos_texto = {
+        columna: "string"
+        for columna in ["Id de oportunidad", "Id de lead"]
+        if columna in columnas_utiles
+    }
     df = pd.read_csv(
         archivo,
         usecols=columnas_utiles,
+        dtype=tipos_texto,
         low_memory=False,
         encoding="utf-8-sig",
     )
@@ -56,6 +69,35 @@ def cargar_csv(archivo):
         df["_beca"] = pd.to_numeric(df["% de beca aprobada"], errors="coerce") / 100
     else:
         df["_beca"] = np.nan
+
+    if "Id de lead" in df.columns:
+        respaldo_lead = pd.Series(df["_unidad"], index=df.index)
+        df["_id_lead"] = df["Id de lead"].fillna(respaldo_lead).astype(str)
+    else:
+        df["_id_lead"] = df["_unidad"]
+
+    # Jerarquía para reconocer inscritos. La bandera explícita tiene prioridad;
+    # las demás columnas sirven como respaldo para extractos con otro formato.
+    if "Conteo de inscrito" in df.columns:
+        df["_es_inscrito"] = (
+            pd.to_numeric(df["Conteo de inscrito"], errors="coerce").fillna(0) > 0
+        )
+        metodo_inscrito = '"Conteo de inscrito" mayor que 0'
+    elif "Hora de inscrito" in df.columns:
+        hora = df["Hora de inscrito"].fillna("").astype(str).str.strip()
+        df["_es_inscrito"] = hora.ne("")
+        metodo_inscrito = '"Hora de inscrito" informada'
+    elif "Etapa de venta" in df.columns:
+        etapa = df["Etapa de venta"].fillna("").astype(str).str.upper().str.strip()
+        df["_es_inscrito"] = etapa.isin(["INSCRITO", "ALUMNO"])
+        metodo_inscrito = '"Etapa de venta" igual a Inscrito o Alumno'
+    else:
+        df["_es_inscrito"] = True
+        metodo_inscrito = "todos los registros (no se encontró una columna de inscripción)"
+
+    df["_unidad_inscrita"] = df["_unidad"].where(df["_es_inscrito"])
+    df["_lead_inscrito"] = df["_id_lead"].where(df["_es_inscrito"])
+    df.attrs["metodo_inscrito"] = metodo_inscrito
 
     # Las columnas repetitivas ocupan mucho menos como categorías.
     for columna in [
@@ -174,16 +216,22 @@ ref = datos_programa[
     (datos_programa["Año comercial"] == anio_ref)
     & (datos_programa["Periodo Comercial"] == periodo_ref)
 ]
-q_ref_historico = int(ref["_unidad"].nunique())
-beca_ref = float(ref["_beca"].fillna(0).mean()) if len(ref) else 0.0
+ref_inscritos = ref[ref["_es_inscrito"]]
+leads_historicos = int(ref["_id_lead"].nunique())
+leads_convertidos = int(ref_inscritos["_id_lead"].nunique())
+leads_sin_inscripcion = max(leads_historicos - leads_convertidos, 0)
+q_ref_historico = int(ref_inscritos["_unidad"].nunique())
+conversion_historica = leads_convertidos / leads_historicos if leads_historicos else 0.0
+beca_ref = float(ref_inscritos["_beca"].fillna(0).mean()) if len(ref_inscritos) else 0.0
 
 if q_ref_historico <= 0:
-    st.error("El periodo seleccionado no contiene inscritos válidos.")
-    st.stop()
+    st.sidebar.warning(
+        "No se encontraron inscritos en este periodo. Define manualmente los inscritos base para simular."
+    )
 
 clave_q_ref = f"q_ref::{programa}::{anio_ref}::{periodo_ref}"
 if clave_q_ref not in st.session_state:
-    st.session_state[clave_q_ref] = q_ref_historico
+    st.session_state[clave_q_ref] = max(q_ref_historico, 1)
 q_ref = st.sidebar.number_input(
     "Inscritos base para simular",
     min_value=1,
@@ -196,8 +244,8 @@ q_ref = st.sidebar.number_input(
     ),
 )
 st.sidebar.caption(
-    f"El CSV registra {q_ref_historico:,} inscritos únicos en {periodo_ref}. "
-    "Este valor histórico no es una meta ni la capacidad."
+    f"El CSV registra {leads_historicos:,} leads y {q_ref_historico:,} inscritos únicos "
+    f"en {periodo_ref}. Este valor histórico no es una meta ni la capacidad."
 )
 
 st.sidebar.markdown("### Precios 2026")
@@ -385,22 +433,29 @@ for precio in precios_grid:
 grid = pd.DataFrame(filas)
 factibles = grid[grid["Factible"]]
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Programa", programa)
-col2.metric("Esquema", esquema)
-col3.metric(
+col2.metric("Leads históricos", f"{leads_historicos:,.0f}")
+col3.metric("Leads sin inscripción", f"{leads_sin_inscripcion:,.0f}")
+col4.metric(
     "Inscritos base del modelo",
     f"{q_ref:,.0f}",
     delta=f"Histórico CSV: {q_ref_historico:,.0f}",
     delta_color="off",
     help="Valor editable desde la barra lateral y utilizado como punto de partida de la demanda.",
 )
-col4.metric("Beca histórica registrada", f"{beca_ref:.1%}")
+col5.metric("Conversión histórica", f"{conversion_historica:.1%}")
+st.caption(
+    f"Esquema: **{esquema}** · Beca registrada entre inscritos: **{beca_ref:.1%}** · "
+    f"Criterio de inscripción: **{datos.attrs.get('metodo_inscrito', 'no disponible')}**."
+)
 
 with st.expander("¿Qué significan los inscritos base?", expanded=False):
     st.markdown(
-        f"El archivo contiene **{q_ref_historico:,} oportunidades únicas inscritas** para "
-        f"**{programa}** en **{periodo_ref}**. Ese es el histórico observado. "
+        f"El archivo contiene **{leads_historicos:,} leads únicos**, de los cuales "
+        f"**{leads_convertidos:,} llegaron a inscripción**, para **{programa}** en "
+        f"**{periodo_ref}**. Los inscritos históricos se cuentan con oportunidades únicas; "
+        "la conversión se calcula con leads únicos para evitar duplicarlos. "
         "El campo **Inscritos base para simular** permite sustituirlo por un supuesto cuando "
         "el CSV esté incompleto o se quiera probar otro punto inicial. No representa la meta ni "
         "la capacidad: la meta es el mínimo deseado y la capacidad es el máximo permitido para "
@@ -428,7 +483,7 @@ c3.metric("Inscritos", f"{optimo['Inscritos']:,.0f}")
 c4.metric("Ingreso nominal", f"${optimo['Ingreso']:,.0f}")
 c5.metric("Margen nominal", f"${optimo['Margen']:,.0f}")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Heatmap", "Frontera", "Comparativa", "Datos y metodología"])
+tab1, tab2, tab3, tab4 = st.tabs(["Heatmap", "Frontera", "Comparativa", "Embudo y metodología"])
 
 with tab1:
     pivote = grid.pivot(index="Beca", columns="Precio", values="Margen")
@@ -497,12 +552,44 @@ with tab4:
             as_index=False,
             observed=True,
         )
-        .agg(Inscritos=("_unidad", "nunique"), Beca_registrada=("_beca", "mean"))
+        .agg(
+            Leads=("_id_lead", "nunique"),
+            Inscritos=("_unidad_inscrita", "nunique"),
+            Leads_convertidos=("_lead_inscrito", "nunique"),
+            Beca_registrada=("_beca", "mean"),
+        )
         .sort_values(["Año comercial", "Periodo Comercial"])
     )
-    st.markdown("#### Tendencia histórica del programa")
-    fig3 = px.bar(tendencia, x="Periodo Comercial", y="Inscritos", color="Año comercial", barmode="group")
+    tendencia["Conversión"] = np.where(
+        tendencia["Leads"] > 0,
+        tendencia["Leads_convertidos"] / tendencia["Leads"],
+        0,
+    )
+    tendencia["Periodo"] = (
+        tendencia["Año comercial"].astype(str)
+        + " · "
+        + tendencia["Periodo Comercial"].astype(str)
+    )
+    st.markdown("#### Leads e inscritos por periodo")
+    fig3 = px.bar(
+        tendencia,
+        x="Periodo",
+        y=["Leads", "Inscritos"],
+        barmode="group",
+        labels={"value": "Personas", "variable": "Etapa"},
+    )
     st.plotly_chart(fig3, width="stretch")
+    st.dataframe(
+        tendencia[["Año comercial", "Periodo Comercial", "Leads", "Inscritos", "Conversión"]]
+        .style.format({"Conversión": "{:.1%}"}),
+        width="stretch",
+        hide_index=True,
+    )
+    st.markdown(
+        "Un inscrito también forma parte de los leads totales: el embudo muestra cuántos leads "
+        "se generaron y qué subconjunto llegó a inscripción. Los leads sin inscripción son la "
+        "diferencia entre ambos grupos."
+    )
     st.markdown("#### Modelo de demanda")
     st.latex(r"Q=\min\{Capacidad,\ Q_{ref}(P^{real}/P^{real}_{ref})^{\varepsilon}e^{\gamma(B-B_{ref})}\}")
     st.markdown(
