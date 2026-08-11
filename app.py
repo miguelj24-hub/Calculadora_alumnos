@@ -349,7 +349,11 @@ with tab3:
 
 with tab4:
     tendencia = (
-        datos_programa.groupby(["Año comercial", "Periodo Comercial"], as_index=False)
+        datos_programa.groupby(
+            ["Año comercial", "Periodo Comercial"],
+            as_index=False,
+            observed=True,
+        )
         .agg(Inscritos=("_unidad", "nunique"), Beca_registrada=("_beca", "mean"))
         .sort_values(["Año comercial", "Periodo Comercial"])
     )
