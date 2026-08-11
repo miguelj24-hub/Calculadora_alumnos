@@ -174,19 +174,46 @@ ref = datos_programa[
     (datos_programa["Año comercial"] == anio_ref)
     & (datos_programa["Periodo Comercial"] == periodo_ref)
 ]
-q_ref = int(ref["_unidad"].nunique())
+q_ref_historico = int(ref["_unidad"].nunique())
 beca_ref = float(ref["_beca"].fillna(0).mean()) if len(ref) else 0.0
 
-if q_ref <= 0:
+if q_ref_historico <= 0:
     st.error("El periodo seleccionado no contiene inscritos válidos.")
     st.stop()
+
+clave_q_ref = f"q_ref::{programa}::{anio_ref}::{periodo_ref}"
+if clave_q_ref not in st.session_state:
+    st.session_state[clave_q_ref] = q_ref_historico
+q_ref = st.sidebar.number_input(
+    "Inscritos base para simular",
+    min_value=1,
+    max_value=50_000,
+    step=1,
+    key=clave_q_ref,
+    help=(
+        "Parte del conteo de oportunidades únicas inscritas en el programa y periodo "
+        "seleccionados. Puedes modificarlo para probar un escenario base distinto."
+    ),
+)
+st.sidebar.caption(
+    f"El CSV registra {q_ref_historico:,} inscritos únicos en {periodo_ref}. "
+    "Este valor histórico no es una meta ni la capacidad."
+)
 
 st.sidebar.markdown("### Precios 2026")
 precio_online_mes = st.sidebar.number_input("Online / maestría mensual", 1_000, 100_000, 17_000, 500)
 precio_online_completo = st.sidebar.number_input("Online / maestría completo", 1_000, 500_000, 60_000, 1_000)
 precio_semestral_mes = st.sidebar.number_input("Semestral mensual", 1_000, 100_000, 23_500, 500)
 precio_semestral_completo = st.sidebar.number_input("Semestral completo", 1_000, 500_000, 105_000, 1_000)
-recargo_medicina = st.sidebar.slider("Recargo Médico Cirujano", 0.0, 0.50, 0.10, 0.01, format="%.0f%%")
+recargo_medicina_pct = st.sidebar.slider(
+    "Recargo Médico Cirujano",
+    min_value=0,
+    max_value=30,
+    value=10,
+    step=1,
+    format="%d%%",
+)
+recargo_medicina = recargo_medicina_pct / 100
 
 precios = {
     "Cuatrimestral / Online": (precio_online_mes, 4, precio_online_completo),
@@ -199,33 +226,133 @@ precios = {
     ),
 }
 
-st.sidebar.markdown("### Supuestos")
-pago_completo = st.sidebar.slider("Alumnos con pago completo", 0.0, 1.0, 0.20, 0.05, format="%.0f%%")
-incremento_nominal = st.sidebar.slider("Aumento nominal anual", 0.0, 0.20, 0.06, 0.005, format="%.1f%%")
-inflacion = st.sidebar.slider("Inflación anual", 0.0, 0.20, 0.04, 0.005, format="%.1f%%")
-costo_pct = st.sidebar.slider("Costo sobre ingreso bruto", 0.0, 0.80, 0.30, 0.01, format="%.0f%%")
-elasticidad = st.sidebar.slider("Elasticidad precio", -5.0, -0.05, -1.20, 0.05)
-efecto_beca = st.sidebar.slider("Sensibilidad adicional a beca", 0.0, 6.0, 1.50, 0.10)
+with st.sidebar.expander("⚙️ Configuración avanzada", expanded=False):
+    st.markdown("#### Supuestos")
+    pago_completo_pct = st.slider(
+        "Alumnos con pago completo",
+        0,
+        100,
+        20,
+        5,
+        format="%d%%",
+        help="Porcentaje supuesto de alumnos que paga el programa completo en lugar de mensualidades.",
+    )
+    incremento_nominal_pct = st.slider(
+        "Aumento nominal anual",
+        0,
+        20,
+        6,
+        1,
+        format="%d%%",
+        help="Crecimiento anual supuesto de los precios publicados.",
+    )
+    inflacion_pct = st.slider(
+        "Inflación anual",
+        0,
+        15,
+        4,
+        1,
+        format="%d%%",
+        help="Se utiliza para comparar precios en términos reales.",
+    )
+    costo_pct_ui = st.slider(
+        "Costo sobre ingreso bruto",
+        0,
+        80,
+        30,
+        1,
+        format="%d%%",
+        help="Costo proporcional supuesto antes de descontar la beca.",
+    )
+    elasticidad = st.slider(
+        "Elasticidad precio",
+        -3.0,
+        -0.1,
+        -1.2,
+        0.1,
+        help="Valor negativo: indica cuánto disminuye la demanda cuando sube el precio real.",
+    )
+    efecto_beca = st.slider(
+        "Sensibilidad adicional a beca",
+        0.0,
+        4.0,
+        1.5,
+        0.1,
+        help="Aumenta la respuesta estimada de inscritos ante una beca mayor.",
+    )
 
-st.sidebar.markdown("### Restricciones")
-capacidad = st.sidebar.number_input("Capacidad máxima", 1, 20_000, 500, 10)
-usar_meta = st.sidebar.checkbox("Exigir meta de inscritos", value=True)
-meta_default = min(q_ref, capacidad)
-meta = st.sidebar.number_input("Meta mínima", 0, int(capacidad), int(meta_default), 1, disabled=not usar_meta)
-usar_bolsa = st.sidebar.checkbox("Aplicar tope de bolsa", value=True)
-bolsa_max = st.sidebar.number_input("Bolsa máxima ($)", 0, 1_000_000_000, 25_000_000, 500_000, disabled=not usar_bolsa)
-paridad_tipo = st.sidebar.selectbox("Paridad real sobre", ["Precio bruto", "Precio neto después de beca"])
+    pago_completo = pago_completo_pct / 100
+    incremento_nominal = incremento_nominal_pct / 100
+    inflacion = inflacion_pct / 100
+    costo_pct = costo_pct_ui / 100
+
+    st.markdown("#### Restricciones")
+    capacidad = st.number_input(
+        "Capacidad máxima",
+        1,
+        20_000,
+        500,
+        10,
+        help="Máximo de inscritos permitido en el escenario objetivo; no modifica el histórico.",
+    )
+    usar_meta = st.checkbox("Exigir meta de inscritos", value=True)
+    clave_meta = f"meta::{programa}::{anio_ref}::{periodo_ref}"
+    if clave_meta not in st.session_state or st.session_state[clave_meta] > capacidad:
+        st.session_state[clave_meta] = min(int(q_ref), int(capacidad))
+    meta = st.number_input(
+        "Meta mínima",
+        0,
+        int(capacidad),
+        step=1,
+        key=clave_meta,
+        disabled=not usar_meta,
+        help="Cantidad mínima de inscritos que debe alcanzar una combinación para considerarse factible.",
+    )
+    usar_bolsa = st.checkbox("Aplicar tope de bolsa", value=True)
+    bolsa_max = st.number_input(
+        "Bolsa máxima ($)",
+        0,
+        1_000_000_000,
+        25_000_000,
+        500_000,
+        disabled=not usar_bolsa,
+        help="Monto nominal máximo destinado a becas en el escenario.",
+    )
+    paridad_tipo = st.selectbox(
+        "Paridad real sobre",
+        ["Precio bruto", "Precio neto después de beca"],
+        help="Define si la comparación contra inflación se realiza antes o después de beca.",
+    )
+
+    st.markdown("#### Grid de búsqueda")
+    rango_precio_pct = st.slider(
+        "Rango alrededor del precio base",
+        5,
+        50,
+        25,
+        5,
+        format="%d%%",
+        help="Porcentaje hacia abajo y arriba que explorará el optimizador.",
+    )
+    precio_pasos = st.slider("Puntos de precio", 15, 60, 35, 5)
+    beca_min_pct, beca_max_pct = st.slider(
+        "Rango de beca",
+        0,
+        70,
+        (0, 50),
+        5,
+        format="%d%%",
+    )
+    beca_pasos = st.slider("Puntos de beca", 10, 50, 26, 1)
+
+    rango_precio = rango_precio_pct / 100
+    beca_min = beca_min_pct / 100
+    beca_max = beca_max_pct / 100
 
 precio_2026 = precio_esperado(esquema, pago_completo, precios)
 precio_ref_nominal = precio_2026 * (1 + incremento_nominal) ** (anio_ref - 2026)
 precio_obj_base = precio_2026 * (1 + incremento_nominal) ** (anio_obj - 2026)
 factor_inflacion = (1 + inflacion) ** (anio_obj - anio_ref)
-
-st.sidebar.markdown("### Grid de búsqueda")
-rango_precio = st.sidebar.slider("Rango alrededor del precio base", 0.05, 0.50, 0.25, 0.05, format="%.0f%%")
-precio_pasos = st.sidebar.slider("Puntos de precio", 10, 80, 35, 5)
-beca_min, beca_max = st.sidebar.slider("Rango de beca", 0.0, 0.70, (0.0, 0.50), 0.01, format="%.0f%%")
-beca_pasos = st.sidebar.slider("Puntos de beca", 10, 71, 26, 1)
 
 precios_grid = np.linspace(precio_obj_base * (1 - rango_precio), precio_obj_base * (1 + rango_precio), precio_pasos)
 becas_grid = np.linspace(beca_min, beca_max, beca_pasos)
@@ -261,8 +388,24 @@ factibles = grid[grid["Factible"]]
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Programa", programa)
 col2.metric("Esquema", esquema)
-col3.metric("Inscritos de referencia", f"{q_ref:,.0f}")
+col3.metric(
+    "Inscritos base del modelo",
+    f"{q_ref:,.0f}",
+    delta=f"Histórico CSV: {q_ref_historico:,.0f}",
+    delta_color="off",
+    help="Valor editable desde la barra lateral y utilizado como punto de partida de la demanda.",
+)
 col4.metric("Beca histórica registrada", f"{beca_ref:.1%}")
+
+with st.expander("¿Qué significan los inscritos base?", expanded=False):
+    st.markdown(
+        f"El archivo contiene **{q_ref_historico:,} oportunidades únicas inscritas** para "
+        f"**{programa}** en **{periodo_ref}**. Ese es el histórico observado. "
+        "El campo **Inscritos base para simular** permite sustituirlo por un supuesto cuando "
+        "el CSV esté incompleto o se quiera probar otro punto inicial. No representa la meta ni "
+        "la capacidad: la meta es el mínimo deseado y la capacidad es el máximo permitido para "
+        "el año objetivo."
+    )
 
 st.warning(
     "Prototipo con datos mixtos: los inscritos y becas disponibles vienen del CSV; "
