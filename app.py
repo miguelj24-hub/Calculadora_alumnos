@@ -478,6 +478,10 @@ with st.sidebar.expander("⚙️ Configuración avanzada", expanded=False):
     )
 
     st.markdown("#### Grid de búsqueda")
+    st.caption(
+        "El grid es la lista de combinaciones que probará el optimizador. "
+        "Más puntos dan mayor precisión, pero aumentan el tiempo de cálculo."
+    )
     rango_precio_pct = st.slider(
         "Rango alrededor del precio base",
         5,
@@ -487,7 +491,17 @@ with st.sidebar.expander("⚙️ Configuración avanzada", expanded=False):
         format="%d%%",
         help="Porcentaje hacia abajo y arriba que explorará el optimizador.",
     )
-    precio_pasos = st.slider("Puntos de precio", 15, 60, 35, 5)
+    precio_pasos = st.slider(
+        "Puntos de precio (resolución)",
+        15,
+        60,
+        35,
+        5,
+        help=(
+            "Cantidad de precios diferentes que se evaluarán dentro del rango. "
+            "No representa pesos ni un porcentaje."
+        ),
+    )
     beca_min_pct, beca_max_pct = st.slider(
         "Rango de beca",
         0,
@@ -495,12 +509,51 @@ with st.sidebar.expander("⚙️ Configuración avanzada", expanded=False):
         (0, 50),
         5,
         format="%d%%",
+        help=(
+            "Beca mínima y máxima que puede probar el optimizador. "
+            "Por ejemplo, 0%–70% permite explorar todo ese intervalo."
+        ),
     )
-    beca_pasos = st.slider("Puntos de beca", 10, 50, 26, 1)
+    beca_pasos = st.slider(
+        "Puntos de beca (resolución)",
+        10,
+        50,
+        26,
+        1,
+        help=(
+            "Cantidad de niveles de beca repartidos entre el mínimo y el máximo. "
+            "No significa puntos porcentuales de beca."
+        ),
+    )
 
     rango_precio = rango_precio_pct / 100
     beca_min = beca_min_pct / 100
     beca_max = beca_max_pct / 100
+
+    precio_2026_vista = precio_esperado(esquema, pago_completo, precios)
+    precio_obj_vista = precio_2026_vista * (1 + incremento_nominal) ** (anio_obj - 2026)
+    precio_min_vista = precio_obj_vista * (1 - rango_precio)
+    precio_max_vista = precio_obj_vista * (1 + rango_precio)
+    salto_precio = (
+        (precio_max_vista - precio_min_vista) / (precio_pasos - 1)
+        if precio_pasos > 1
+        else 0
+    )
+    salto_beca_pp = (
+        (beca_max_pct - beca_min_pct) / (beca_pasos - 1)
+        if beca_pasos > 1
+        else 0
+    )
+    combinaciones_grid = precio_pasos * beca_pasos
+
+    st.info(
+        f"Se probarán **{precio_pasos} precios** entre "
+        f"**${precio_min_vista:,.0f} y ${precio_max_vista:,.0f}**, con saltos aproximados "
+        f"de **${salto_precio:,.0f}**; y **{beca_pasos} niveles de beca** entre "
+        f"**{beca_min_pct}% y {beca_max_pct}%**, con saltos aproximados de "
+        f"**{salto_beca_pp:.2f} puntos porcentuales**. En total: "
+        f"**{combinaciones_grid:,} combinaciones**."
+    )
 
 precio_2026 = precio_esperado(esquema, pago_completo, precios)
 precio_ref_nominal = precio_2026 * (1 + incremento_nominal) ** (anio_ref - 2026)
