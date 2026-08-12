@@ -1,39 +1,53 @@
-# Configurar el guardado en Google Sheets
+# Guardar en Google Sheets sin clave JSON
 
-La aplicación guarda tres filas por escenario: Referencia, Actual y Óptimo. El guardado ocurre únicamente al presionar **Guardar escenario en Google Sheets**.
+Este método funciona con una cuenta personal gratuita. No requiere Google Cloud Shell, facturación ni una cuenta de servicio.
 
 ## 1. Crear la hoja
 
-1. En Google Drive, crea una hoja de cálculo vacía.
-2. Ponle un nombre, por ejemplo `Comparativas Optimizador`.
-3. Copia el identificador que aparece entre `/d/` y `/edit` en la dirección de la hoja.
+1. En Google Drive crea una hoja de cálculo vacía.
+2. Llámala, por ejemplo, `Comparativas Optimizador`.
+3. Abre **Extensiones → Apps Script**.
 
-## 2. Crear la cuenta de servicio
+## 2. Pegar el código
 
-1. Entra a Google Cloud Console y crea o selecciona un proyecto.
-2. Activa **Google Sheets API** y **Google Drive API**.
-3. Abre **IAM y administración → Cuentas de servicio**.
-4. Crea una cuenta de servicio y genera una clave en formato JSON.
-5. Copia el correo `client_email` de ese archivo JSON.
+1. Borra el contenido de `Código.gs`.
+2. Abre `GOOGLE_APPS_SCRIPT.gs`, copia todo y pégalo en `Código.gs`.
+3. En `SPREADSHEET_ID`, reemplaza `PEGA_EL_ID_DE_LA_HOJA` por el texto ubicado entre `/d/` y `/edit` en la URL de tu hoja.
+4. En `SECRET_TOKEN`, reemplaza `INVENTA_UN_TOKEN_LARGO` por una contraseña larga inventada, idealmente de 40 o más letras y números.
+5. Guarda el proyecto.
 
-No subas el JSON ni una clave privada a GitHub.
+No compartas el token ni lo subas a GitHub.
 
-## 3. Compartir la hoja
+## 3. Publicar como aplicación web
 
-Comparte la hoja de Google Sheets con el `client_email` de la cuenta de servicio y dale permiso de **Editor**.
+1. Presiona **Implementar → Nueva implementación**.
+2. En el tipo selecciona **Aplicación web**.
+3. En **Ejecutar como** selecciona **Yo**.
+4. En **Quién tiene acceso** selecciona **Cualquier usuario**.
+5. Presiona **Implementar** y autoriza el acceso solicitado por Google.
+6. Copia la URL; debe terminar en `/exec`.
 
-## 4. Configurar Streamlit Cloud
+Si Google muestra una advertencia de aplicación no verificada, continúa únicamente si confirmas que el proyecto y todo el código son tuyos.
 
-1. En Streamlit Cloud abre la aplicación.
-2. Entra a **Manage app → Settings → Secrets**.
-3. Usa `.streamlit/secrets.toml.example` como plantilla.
-4. Sustituye `spreadsheet_id` y todos los campos de `gcp_service_account` con los valores del archivo JSON.
-5. Guarda los Secrets y reinicia la aplicación.
+## 4. Configurar Streamlit
 
-El bloque `private_key` debe conservar los caracteres `\n` indicados en el JSON.
+1. En Streamlit abre **Manage app → Settings → Secrets**.
+2. Pega:
+
+```toml
+[google_sheets_webhook]
+url = "URL_QUE_TERMINA_EN_EXEC"
+token = "EL_MISMO_TOKEN_DEL_APPS_SCRIPT"
+```
+
+3. Sustituye ambos valores, guarda y reinicia la aplicación.
+
+## 5. Probar
+
+En Comparativa presiona **Guardar escenario en Google Sheets**. Apps Script creará una pestaña `Comparativas` y añadirá tres filas: Referencia, Actual y Óptimo.
 
 ## Seguridad
 
-- `.streamlit/secrets.toml` está excluido mediante `.gitignore`.
-- Nunca publiques el JSON de la cuenta de servicio.
-- Si una clave se publica accidentalmente, elimínala desde Google Cloud y genera una nueva.
+- El Apps Script valida el token antes de guardar.
+- El token permanece en Streamlit Secrets, no en GitHub.
+- Si el token se filtra, cámbialo en Apps Script y Streamlit; después crea una implementación nueva.

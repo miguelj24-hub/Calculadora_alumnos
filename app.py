@@ -4,13 +4,12 @@ from hashlib import sha256
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-import gspread
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
-from google.oauth2.service_account import Credentials
 
 
 st.set_page_config(page_title="Optimizador Precio–Beca", page_icon="🎓", layout="wide")
@@ -150,34 +149,15 @@ def calcular_kpis(q, precio, beca, costo_pct):
 
 
 def google_sheets_configurado():
-    return (
-        "gcp_service_account" in st.secrets
-        and "google_sheets" in st.secrets
-        and bool(st.secrets["google_sheets"].get("spreadsheet_id"))
+    return "google_sheets_webhook" in st.secrets and all(
+        st.secrets["google_sheets_webhook"].get(campo)
+        for campo in ["url", "token"]
     )
 
 
 def guardar_comparativa_google_sheets(comparativa, contexto):
     if not google_sheets_configurado():
-        raise ValueError("Falta configurar Google Sheets en los Secrets de Streamlit.")
-
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.file",
-    ]
-    credenciales = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]),
-        scopes=scopes,
-    )
-    cliente = gspread.authorize(credenciales)
-    configuracion = st.secrets["google_sheets"]
-    libro = cliente.open_by_key(configuracion["spreadsheet_id"])
-    nombre_hoja = configuracion.get("worksheet_name", "Comparativas")
-
-    try:
-        hoja = libro.worksheet(nombre_hoja)
-    except gspread.WorksheetNotFound:
-        hoja = libro.add_worksheet(title=nombre_hoja, rows=1000, cols=30)
+        raise ValueError("Falta configurar el webhook de Google Sheets en Streamlit Secrets.")
 
     encabezados = [
         "Id registro",
@@ -207,9 +187,6 @@ def guardar_comparativa_google_sheets(comparativa, contexto):
         "Sensibilidad a beca",
         "Paridad real sobre",
     ]
-
-    if not hoja.get_all_values():
-        hoja.append_row(encabezados, value_input_option="RAW")
 
     id_registro = str(uuid4())
     fecha = datetime.now(ZoneInfo("America/Mexico_City")).isoformat(timespec="seconds")
@@ -244,8 +221,17 @@ def guardar_comparativa_google_sheets(comparativa, contexto):
             contexto["paridad_tipo"],
         ])
 
-    hoja.append_rows(filas, value_input_option="USER_ENTERED")
-    return libro.url, id_registro
+    configuracion = st.secrets["google_sheets_webhook"]
+    respuesta = requests.post(
+        configuracion["url"],
+        json={"token": configuracion["token"], "headers": encabezados, "rows": filas},
+        timeout=30,
+    )
+    respuesta.raise_for_status()
+    resultado = respuesta.json()
+    if not resultado.get("ok"):
+        raise ValueError(resultado.get("error", "Google Sheets rechazó el guardado."))
+    return resultado.get("sheet_url", ""), id_registro
 
 
 st.title("🎓 Optimizador de Precio y Beca")
@@ -729,8 +715,8 @@ with tab3:
     with col_guardar:
         if not google_sheets_configurado():
             st.info(
-                "Configura las credenciales de Google Sheets en los Secrets de Streamlit "
-                "para habilitar el guardado."
+                "Configura la URL y el token de Apps Script en los Secrets de Streamlit "
+                "para habilitar el guardado. No se necesita una clave JSON."
             )
         elif st.button(
             "Guardar escenario en Google Sheets",

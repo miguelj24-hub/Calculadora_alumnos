@@ -46,4 +46,6 @@ La aplicación diferencia leads e inscritos. Prioriza `Conteo de inscrito > 0`; 
 
 Los identificadores se cargan como texto para conservar completos sus 19 dígitos y evitar que la notación científica agrupe personas diferentes.
 
-La tabla comparativa puede guardarse en una hoja acumulativa de Google Sheets mediante un botón independiente de la descarga. Consulta `CONFIGURAR_GOOGLE_SHEETS.md` para crear la cuenta de servicio y configurar los Secrets de Streamlit sin publicar credenciales en GitHub.
+La tabla comparativa puede guardarse en una hoja acumulativa de Google Sheets mediante un botón independiente de la descarga. Consulta `CONFIGURAR_GOOGLE_SHEETS.md`: utiliza un webhook gratuito de Google Apps Script y no requiere cuenta de servicio, Google Cloud Shell, facturación ni clave JSON.
+
+La configuración avanzada explica la resolución del grid. Los puntos de precio indican cuántos precios distintos se prueban y los puntos de beca cuántos niveles se distribuyen en el rango elegido. La interfaz muestra dinámicamente los saltos aproximados y el total de combinaciones.
